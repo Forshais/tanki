@@ -172,7 +172,6 @@ class Game {
   teardown() {
     if (!this.world) return;
     this.toggleScope(false); this.release(); this.sfx.stopEngine();
-    this.sfx.trackState?.clear();
     if (this.sfx.drives) { for (const d of this.sfx.drives.values()) d.src.stop(); this.sfx.drives.clear(); }
     const disposeMat = m => {
       for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
@@ -661,14 +660,13 @@ class Game {
     this.world.updateBushes(dt);
     this.tanks = this.tanks.filter(t => t.alive || t.wreck);
     this.combat.update(dt); this.fx.update(dt);
-    if (me && me.alive && !this.paused) this.sfx.engine(me.controls.throttle, me.v, me.trackV || 0, me.turnW || 0);
-    // track clatter: the player's own, and nearby tanks (louder the closer to the camera)
+    // engine and tracks (one recording): the player's own tank, and nearby tanks louder the closer to the camera
     if (this.sfx.ctx) {
       const quiet = this.paused && !this.net;
       for (const t of this.tanks) {
-        const v = t.alive && !quiet ? t.trackV || 0 : 0, ear = t === me ? 1 : this.hearing(t);
-        this.sfx.tracks(t, v, (t === me ? .42 : ear * .38) * (this.sfx.driveBuf ? .45 : 1));
-        this.sfx.drive(t, v, t === me ? .6 : ear * .5);
+        const v = t.alive ? t.trackV || 0 : 0, ear = t === me ? 1 : this.hearing(t);
+        const vol = !t.alive || quiet ? 0 : t === me ? .6 : ear * .45;
+        this.sfx.drive(t, v, vol, t === me && !this.paused ? Math.abs(t.controls.throttle) : 0);
       }
       this.sfx.driveSweep();
     }
