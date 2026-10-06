@@ -39,7 +39,7 @@ const clean = (s, n) => String(s || '').replace(/[<>&"]/g, '').trim().slice(0, n
 
 function roomInfo(r) {
   return { id: r.id, name: r.name, locked: !!r.pass, host: r.host, state: r.state, settings: r.settings,
-    players: [...r.players.values()] };
+    players: [...r.players.values()].map(p => ({ ...p, rtt: clients.get(p.id)?.rtt || 0 })) };
 }
 function roomList() {
   return [...rooms.values()].map(r => ({ id: r.id, name: r.name, locked: !!r.pass, players: r.players.size, state: r.state,
@@ -65,7 +65,8 @@ function leave(c) {
   broadcastList();
 }
 
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024 });
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 256 * 1024,
+  perMessageDeflate: { threshold: 200, zlibDeflateOptions: { level: 3 } } });
 wss.on('connection', ws => {
   const c = { id: nextId++, ws, name: 'Spēlētājs', room: null, alive: true };
   clients.set(c.id, c);
@@ -77,6 +78,8 @@ wss.on('connection', ws => {
     switch (m.t) {
       case 'name': c.name = clean(m.name, 16) || 'Spēlētājs'; if (r) { r.players.get(c.id).name = c.name; broadcastRoom(r); } break;
       case 'list': send(c, { t: 'list', rooms: roomList() }); break;
+      case 'ping': send(c, { t: 'pong', ts: m.ts }); break;                 // the client measures its round trip
+      case 'rtt': c.rtt = Math.max(0, Math.min(5000, Math.round(+m.ms || 0))); break;
       case 'create': {
         if (c.room) leave(c);
         const room = { id: nextId++, name: clean(m.name, 24) || `${c.name} istaba`, pass: String(m.pass || '').slice(0, 32), host: c.id,
@@ -130,6 +133,9 @@ wss.on('connection', ws => {
   });
   ws.on('close', () => { leave(c); clients.delete(c.id); });
 });
+
+// lobbies show everybody's ping: refresh them now and then
+setInterval(() => { for (const r of rooms.values()) if (r.state === 'lobby') broadcastRoom(r); }, 4000);
 
 // drop dead connections (laptop lid closed, network gone)
 setInterval(() => {

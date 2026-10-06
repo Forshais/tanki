@@ -238,6 +238,20 @@ class Game {
     return t;
   }
 
+  // like World of Tanks: an enemy in standing bushes stays invisible to us unless one of our tanks is within
+  // 18 m; firing (or being hit) gives it away for a few seconds. Bots use the same rule through world.sight().
+  spotting(dt) {
+    const mine = this.tanks.filter(t => t.alive && t.team === this.myTeam);
+    for (const t of this.tanks) {
+      let hide = false;
+      if (t.alive && t.team !== this.myTeam) {
+        t.revealT = Math.max(0, (t.revealT || 0) - dt);
+        hide = t.revealT === 0 && this.world.concealed(t.x, t.z) && !mine.some(a => Math.hypot(a.x - t.x, a.z - t.z) < 18);
+      }
+      if (hide !== !!t.hidden) { t.hidden = hide; t.root.visible = !hide; }
+    }
+  }
+
   addBot(t) { this.bots.push(new Bot(this, t, t.role || 'attack')); }
 
   // extra: { name, owner } — owner = the client id of a remote human whose inputs drive this tank (host)
@@ -310,6 +324,7 @@ class Game {
   }
 
   onHit(owner, target, r, hit) {
+    target.revealT = Math.max(target.revealT || 0, 2);
     if (r.result === 'pen') this.stat(owner, 'pens');
     if (!target.alive) return;          // the kill banner already said it all
     const where = hit.part ? hit.part.label : 'korpusā', face = { front: 'priekšā', side: 'sānos', rear: 'aizmugurē', top: 'jumtā', bottom: 'apakšā' }[hit.face];
@@ -607,7 +622,7 @@ class Game {
     if (centre && !this.scope) o.addScaledVector(d, this.wtDist);   // skip what lies between the camera and the tank
     let best = null;
     for (const t of this.tanks) {
-      if (t === me || (!t.alive && !t.wreck)) continue;
+      if (t === me || t.hidden || (!t.alive && !t.wreck)) continue;
       const h = t.raycast(o, d, 500);
       if (h && (!best || h.t < best.t)) best = { ...h, tank: t };
     }
@@ -645,7 +660,7 @@ class Game {
 
   // ------------------------------------------------------------------ loop
   update(dt) {
-    if (!this.world) return;
+    if (!this.world || !(dt > 0)) return;
     this.time += dt;
     const net = this.net, guest = net?.guest;
     if (this.timeLeft !== null && !this.over && (this.timeLeft -= dt) <= 0) { this.timeLeft = 0; if (!guest) this.timeUp(); }
@@ -657,6 +672,7 @@ class Game {
     else for (const b of this.bots) b.update(dt);
     for (const t of this.tanks) t.update(dt);
     if (!guest) this.separate(dt);
+    this.spotting(dt);
     this.world.updateBushes(dt);
     this.tanks = this.tanks.filter(t => t.alive || t.wreck);
     this.combat.update(dt); this.fx.update(dt);
@@ -761,8 +777,8 @@ class Game {
       const lim = this.opts.fps;
       // frame cap keeps the GPU (and the laptop) cooler; a running deadline averages to the cap on 144 Hz screens too
       if (lim) { if (now < next - 1) return; next = Math.max(next + 1000 / lim, now - 1000 / lim); }
-      const dt = Math.min((now - last) / 1000, 1 / 20); last = now;
-      if (!this.paused || this.net) this.update(dt);
+      const dt = Math.min((now - last) / 1000, 1 / 20); last = Math.max(last, now);
+      if ((!this.paused || this.net) && dt > 0) this.update(dt);
       this.lastRaf = now;
       this.frame(dt);
       this.fpsN++; this.fpsT += dt;
@@ -777,7 +793,7 @@ class Game {
       const now = performance.now();
       if (!this.net || !this.world || now - this.lastRaf < 120) return;
       const dt = Math.min((now - last) / 1000, 1 / 10); last = now;
-      this.update(dt);
+      if (dt > 0) this.update(dt);
     };
   }
 }

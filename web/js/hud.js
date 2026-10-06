@@ -40,7 +40,7 @@ export class Hud {
     // floating name plates
     for (const t of g.tanks) {
       const el = this.label(t);
-      if (!t.alive || (t === g.player && g.needsLock())) { el.style.display = 'none'; continue; }
+      if (!t.alive || t.hidden || (t === g.player && g.needsLock())) { el.style.display = 'none'; continue; }
       this.v.set(t.x, 3.4, t.z).project(cam);
       if (this.v.z > 1) { el.style.display = 'none'; continue; }
       el.style.display = '';
@@ -101,7 +101,7 @@ export class Hud {
     const c = this.mm.getContext('2d');
     c.drawImage(this.mmBase, 0, 0);
     for (const t of g.tanks) {
-      if (!t.alive) continue;
+      if (!t.alive || t.hidden) continue;
       const x = (t.x + W / 2) * 2, y = (t.z + H / 2) * 2;
       c.fillStyle = t === g.player ? '#ffffff' : g.cfg.TEAMS[t.team].color;
       c.beginPath(); c.arc(x, y, t === g.player ? 4 : 3, 0, 7); c.fill();

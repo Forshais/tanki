@@ -285,9 +285,9 @@ export class Tank {
     if (this.isPlayer) for (const k in this.mod) if (was[k] > 0 && this.mod[k] === 0) this.g.hud.message(this.g.cfg.MODULES[k].done, 'info');
   }
   netState() {
-    const r = v => Math.round(v * 1000) / 1000;
-    return [r(this.x), r(this.z), r(this.heading), r(this.v), r(this.turretYaw), r(this.pitch), Math.round(this.hp), r(this.reload),
-      this.ammo === 'HE' ? 1 : 0, r(this.shield), this.spinDir || 0, r(this.mod.turret), r(this.mod.track), r(this.mod.engine), this.trackSide === 'R' ? 1 : 0];
+    const r = v => Math.round(v * 1000) / 1000, c = v => Math.round(v * 100) / 100, d = v => Math.round(v * 10) / 10;
+    return [c(this.x), c(this.z), r(this.heading), c(this.v), r(this.turretYaw), r(this.pitch), Math.round(this.hp), d(this.reload),
+      this.ammo === 'HE' ? 1 : 0, d(Math.max(0, this.shield)), this.spinDir || 0, d(this.mod.turret), d(this.mod.track), d(this.mod.engine), this.trackSide === 'R' ? 1 : 0];
   }
 
   // marks, sinking and tilting in water, dust, wake, rolling tracks, engine smoke (simulated and puppet tanks alike)
@@ -322,8 +322,9 @@ export class Tank {
       this.g.fx.dust(this.x + dx, this.z + dz, Math.abs(this.v) / s.maxSpeed);
     }
     // tracks and wheels roll with each side's ground speed
-    const drive = this.spinning ? spin * s.maxSpeed * .6 : moved / dt * Math.sign(this.v);
-    const w = wrap(this.heading - h0) / dt, vL = drive - w * TX, vR = drive + w * TX;
+    const ok = dt > 1e-4;                // a zero time step would give 0/0 and the tracks would vanish for good
+    const drive = this.spinning ? spin * s.maxSpeed * .6 : ok ? moved / dt * Math.sign(this.v) : 0;
+    const w = ok ? wrap(this.heading - h0) / dt : 0, vL = drive - w * TX, vR = drive + w * TX;
     this.trackV = (Math.abs(vL) + Math.abs(vR)) / 2; this.turnW = Math.abs(w);          // for the sound
     this.animateTracks(broken && this.trackSide === 'L' ? 0 : vL * dt, broken && this.trackSide === 'R' ? 0 : vR * dt);
     if (engineDead && (this.smokeT -= dt) < 0) {
@@ -338,9 +339,12 @@ export class Tank {
 
   // advance each side by its travelled distance: links slide along the path, wheels spin
   animateTracks(dL, dR) {
+    if (!Number.isFinite(dL)) dL = 0;
+    if (!Number.isFinite(dR)) dR = 0;
     for (const tr of this.tracks) {
       const d = tr.side === 'L' ? dL : dR;
       tr.off = ((tr.off - d) % TRACK.L + TRACK.L) % TRACK.L;
+      if (!Number.isFinite(tr.off)) tr.off = 0;
       for (let k = 0; k < TRACK.pairs; k++) {
         const i = Math.floor(((k * TRACK.step + tr.off) % TRACK.L) / TRACK.L * TRACK.N) % TRACK.N;
         _m.makeRotationX(TRACK.A[i]); _m.setPosition(tr.x, TRACK.Y[i], TRACK.Z[i]);
@@ -348,7 +352,7 @@ export class Tank {
       }
       tr.im.instanceMatrix.needsUpdate = true;
     }
-    for (const wl of this.wheels) wl.o.rotation.x += (wl.side === 'L' ? dL : dR) / wl.r;
+    for (const wl of this.wheels) { wl.o.rotation.x += (wl.side === 'L' ? dL : dR) / wl.r; if (!Number.isFinite(wl.o.rotation.x)) wl.o.rotation.x = 0; }
   }
 
   turretPos() {
@@ -375,7 +379,7 @@ export class Tank {
 
   fire() {
     const { p, dir } = this.muzzle();
-    this.reload = this.spec.reload; this.recoil = 1;
+    this.reload = this.spec.reload; this.recoil = 1; this.revealT = 3;
     this.g.stat(this, 'shots');
     const sid = this.g.combat.spawn(this, p, dir, this.ammo);
     this.g.net?.event('shot', { id: this.id, sid, p: [p.x, p.y, p.z].map(v => Math.round(v * 1000) / 1000), d: [dir.x, dir.y, dir.z].map(v => Math.round(v * 10000) / 10000), type: this.ammo });

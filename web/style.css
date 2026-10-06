@@ -174,3 +174,6 @@ button.sm { padding: 2px 9px; font-size: 13px; margin: 0 2px; }
 .credits a { color: #b8bec8; }
 #net-link { width: 300px !important; font-size: 12px !important; }
 .small { font-size: 12px; margin: 2px 0 8px; }
+#ping { position: fixed; left: 50%; bottom: 8px; transform: translateX(-50%); font: 700 12.5px Consolas, monospace; text-shadow: 0 1px 2px #000; z-index: 4; pointer-events: none; }
+#ping.good, .rtt.good { color: #8dff7a; } #ping.warn, .rtt.warn { color: #ffd46a; } #ping.bad, .rtt.bad { color: #ff6a5a; }
+.rtt { font: 700 11px Consolas, monospace; margin-left: 4px; }

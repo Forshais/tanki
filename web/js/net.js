@@ -8,7 +8,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const BOT_NAMES = { blue: ['Ozols', 'Kalniņš', 'Bērziņš'], red: ['Vilks', 'Lācis', 'Ērglis'] };
 const RULES = { lives3: '3 dzīvības', lives1: '1 dzīvība', time: 'Uz laiku' };
 const SNAP = 1 / 20, INPUT = 1 / 20;
-const r3 = v => Math.round(v * 1000) / 1000;
+const r3 = v => Math.round(v * 1000) / 1000, r2 = v => Math.round(v * 100) / 100;
 
 export class Net {
   constructor(game) {
@@ -42,7 +42,10 @@ export class Net {
     if (this.ws && this.ws.readyState <= 1) return;
     this.setStatus('Savienojas ar serveri…');
     const ws = this.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-    ws.onopen = () => { this.setStatus(''); this.send({ t: 'name', name: this.name() }); this.send({ t: 'list' }); };
+    ws.onopen = () => {
+      this.setStatus(''); this.send({ t: 'name', name: this.name() }); this.send({ t: 'list' });
+      clearInterval(this.pingI); this.pingI = setInterval(() => this.send({ t: 'ping', ts: performance.now() }), 2000);
+    };
     ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch { return; } this.onMsg(m); };
     ws.onclose = () => {
       this.ws = null; this.room = null;
@@ -57,6 +60,12 @@ export class Net {
   onMsg(m) {
     switch (m.t) {
       case 'hello': this.myId = m.id; break;
+      case 'pong': {
+        const ms = performance.now() - m.ts;
+        this.rtt = this.rtt ? this.rtt * .7 + ms * .3 : ms;
+        this.send({ t: 'rtt', ms: this.rtt }); this.showPing();
+        break;
+      }
       case 'list': this.rooms = m.rooms; this.render(); if (this.invite && !this.room) this.useInvite(); break;
       case 'room': this.room = m.room; this.render(); break;
       case 'closed': this.room = null; if (this.active) { this.stopMatch(); this.g.toMenu(); } this.flash(m.why, true); this.send({ t: 'list' }); break;
@@ -69,6 +78,15 @@ export class Net {
       case 'left': if (this.host && this.active) this.playerLeft(m.id); break;
       case 'g': if (this.active) this.host ? this.hostInput(m.from, m.d) : this.guestApply(m.d); break;
     }
+  }
+
+  // in a match: a guest's delay is its own trip to the server plus the host's (the host runs the battle)
+  showPing() {
+    const el = $('ping'); if (!el) return;
+    if (!this.active || !this.rtt) { el.textContent = ''; return; }
+    const ms = Math.round(this.host ? this.rtt : this.rtt + (this.hostRtt || 0));
+    el.textContent = this.host ? `Ping ${ms} ms (tu esi saimnieks)` : `Ping līdz saimniekam ${ms} ms`;
+    el.className = ms < 120 ? 'good' : ms < 250 ? 'warn' : 'bad';
   }
 
   flash(text, bad) {
@@ -104,7 +122,8 @@ export class Net {
     const r = this.room, s = r.settings, isHost = r.host === this.myId, me = r.players.find(p => p.id === this.myId);
     const team = t => {
       const humans = r.players.filter(p => p.team === t), bots = Math.min(s.bots[t], 3 - humans.length);
-      const list = humans.map(p => `<li>${esc(p.name)}${p.id === r.host ? ' <em>saimnieks</em>' : ''}${p.id === this.myId ? ' <em>tu</em>' : ''}</li>`).join('')
+      const ping = p => p.rtt ? ` <span class="rtt ${p.rtt < 120 ? 'good' : p.rtt < 250 ? 'warn' : 'bad'}">${p.rtt} ms</span>` : '';
+      const list = humans.map(p => `<li>${esc(p.name)}${p.id === r.host ? ' <em>saimnieks</em>' : ''}${p.id === this.myId ? ' <em>tu</em>' : ''}${ping(p)}</li>`).join('')
         + Array.from({ length: Math.max(0, bots) }, () => '<li class="dim">bots</li>').join('');
       const botCtl = isHost ? `<div class="bots">boti <button class="ghost sm" data-bot="${t}" data-d="-1">−</button> ${bots} <button class="ghost sm" data-bot="${t}" data-d="1">+</button></div>` : '';
       const join = me && me.team !== t && humans.length < 3 ? `<button class="ghost sm" data-team="${t}">Pāriet šeit</button>` : '';
@@ -172,8 +191,9 @@ export class Net {
     this.host = mode.hostId === this.myId; this.guest = !this.host; this.active = true;
     this.events = []; this.byId.clear(); this.snapT = 0; this.statT = 0; this.inT = 0; this.rep = 0; this.ammo = 'AP'; this.lobbyReady = false;
     this.g.newMatch(mode, this);
+    this.showPing();
   }
-  stopMatch() { this.active = false; this.host = this.guest = false; this.g.net = null; }
+  stopMatch() { this.active = false; this.host = this.guest = false; this.g.net = null; this.showPing(); }
 
   // back to the room after the battle (or the host aborting it)
   backToRoom() {
@@ -192,8 +212,8 @@ export class Net {
     if ((this.snapT -= dt) > 0) return;
     this.snapT = SNAP;
     const g = this.g, inf = a => a.map(n => n === Infinity ? -1 : n);
-    const s = { tk: g.tanks.map(t => [t.id, t.alive ? 1 : 0, ...t.netState()]), tl: g.timeLeft === null ? null : r3(g.timeLeft),
-      left: { blue: inf(g.left.blue), red: inf(g.left.red) }, b: [g.world.bases.blue.hp, g.world.bases.red.hp] };
+    const s = { tk: g.tanks.map(t => t.alive ? [t.id, 1, ...t.netState()] : [t.id, 0, r2(t.x), r2(t.z), r2(t.heading)]), tl: g.timeLeft === null ? null : r3(g.timeLeft),
+      left: { blue: inf(g.left.blue), red: inf(g.left.red) }, b: [g.world.bases.blue.hp, g.world.bases.red.hp], hr: Math.round(this.rtt || 0) };
     if ((this.statT -= SNAP) <= 0 || this.events.some(e => e[0] === 'kill')) { this.statT = 1; s.st = g.stats; }
     this.send({ t: 'g', d: { s, e: this.events } });
     this.events = [];
@@ -242,6 +262,7 @@ export class Net {
       else if (!t.alive && (Math.abs(t.x - a[2]) > .01 || Math.abs(t.z - a[3]) > .01)) { t.x = a[2]; t.z = a[3]; t.heading = a[4]; t.sync(); }   // pushed wreck
     }
     if (s.tl !== null) g.timeLeft = s.tl;
+    this.hostRtt = s.hr || 0;
     const inf = a => a.map(n => n < 0 ? Infinity : n);
     g.left = { blue: inf(s.left.blue), red: inf(s.left.red) };
     g.world.bases.blue.hp = s.b[0]; g.world.bases.red.hp = s.b[1];
@@ -256,7 +277,7 @@ export class Net {
         const t = this.byId.get(e.id), p = V(e.p), d = V(e.d);
         g.combat.spawn(t, p, d, e.type, e.sid, true);
         g.fx.muzzle(p, d); g.sfx.shot(g.hearing(p), t === g.player);
-        if (t) { t.recoil = 1; if (t === g.player) g.shake(.35); }
+        if (t) { t.recoil = 1; t.revealT = 3; if (t === g.player) g.shake(.35); }
         break;
       }
       case 'hit': {
