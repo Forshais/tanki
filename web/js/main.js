@@ -173,6 +173,7 @@ class Game {
     if (!this.world) return;
     this.toggleScope(false); this.release(); this.sfx.stopEngine();
     this.sfx.trackState?.clear();
+    if (this.sfx.drives) { for (const d of this.sfx.drives.values()) d.src.stop(); this.sfx.drives.clear(); }
     const disposeMat = m => {
       for (const v of Object.values(m)) if (v && v.isTexture) v.dispose();
       m.dispose();
@@ -662,7 +663,15 @@ class Game {
     this.combat.update(dt); this.fx.update(dt);
     if (me && me.alive && !this.paused) this.sfx.engine(me.controls.throttle, me.v, me.trackV || 0, me.turnW || 0);
     // track clatter: the player's own, and nearby tanks (louder the closer to the camera)
-    for (const t of this.tanks) this.sfx.tracks(t, t.alive ? t.trackV || 0 : 0, t === me ? .42 : this.hearing(t) * .38);
+    if (this.sfx.ctx) {
+      const quiet = this.paused && !this.net;
+      for (const t of this.tanks) {
+        const v = t.alive && !quiet ? t.trackV || 0 : 0, ear = t === me ? 1 : this.hearing(t);
+        this.sfx.tracks(t, v, (t === me ? .42 : ear * .38) * (this.sfx.driveBuf ? .45 : 1));
+        this.sfx.drive(t, v, t === me ? .6 : ear * .5);
+      }
+      this.sfx.driveSweep();
+    }
     this.world.waterNormal.offset.x += dt * .02; this.world.waterNormal.offset.y += dt * .013;
     if (net?.host) net.hostTick(dt);
   }

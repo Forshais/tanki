@@ -12,6 +12,35 @@ export class Sfx {
     this.engineInit();
     this.clackBufs = [0, 1, 2].map(k => this.makeClack(k));
     this.trackState = new Map();
+    // recorded driving loop (garuda1982, Freesound 541240, CC BY 4.0), made by tools/make_drive_loop.py
+    this.drives = new Map(); this.driveBuf = null;
+    fetch('assets/tank_drive.wav').then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b)).then(buf => { this.driveBuf = buf; }).catch(() => {});
+  }
+
+  // one looping copy of the recording per moving tank: louder and faster with track speed
+  drive(key, trackV, vol) {
+    if (!this.driveBuf) return;
+    const ctx = this.ctx, t = ctx.currentTime, k = Math.min(1, trackV / 8);
+    let d = this.drives.get(key);
+    const want = trackV > .2 && vol > .02 ? vol * (.25 + .75 * Math.pow(k, .7)) : 0;
+    if (!d) {
+      if (!want) return;
+      const src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = this.driveBuf; src.loop = true; g.gain.value = 0;
+      src.connect(g); g.connect(this.master); src.start(0, Math.random() * this.driveBuf.duration);
+      this.drives.set(key, d = { src, g });
+    }
+    d.seen = true;
+    d.g.gain.setTargetAtTime(want, t, want > d.g.gain.value ? .12 : .25);
+    d.src.playbackRate.setTargetAtTime(.72 + .38 * k, t, .2);
+  }
+  // after each update: silence and drop loops of tanks that were not updated (gone, removed wrecks)
+  driveSweep() {
+    for (const [key, d] of this.drives) {
+      if (d.seen) { d.seen = false; continue; }
+      d.g.gain.setTargetAtTime(0, this.ctx.currentTime, .15);
+      d.src.stop(this.ctx.currentTime + .8); this.drives.delete(key);
+    }
   }
 
   // V-12 diesel: 6 firings per crank turn (pulse wave), a half-order rumble, and combustion clatter
@@ -95,12 +124,12 @@ export class Sfx {
     const f = this.rpm / 10;                                   // 12 cylinders, 4-stroke: rpm / 60 * 6
     this.fireOsc.frequency.setTargetAtTime(f, t, .05); this.chopOsc.frequency.setTargetAtTime(f, t, .05);
     this.halfOsc.frequency.setTargetAtTime(f / 2 * 1.003, t, .05);
-    this.eng.gain.setTargetAtTime(.075 + .07 * load + .04 * k, t, .15);
+    this.eng.gain.setTargetAtTime((.075 + .07 * load + .04 * k) * (this.driveBuf ? 1 - .5 * k : 1), t, .15);
     this.engLp.frequency.setTargetAtTime(260 + 4.5 * f + 700 * load, t, .1);
     this.clat.gain.setTargetAtTime(.05 + .12 * load, t, .1);
     this.clatBp.frequency.setTargetAtTime(1100 + 4 * f, t, .1);
     const tv = Math.min(1, trackV / 8);
-    this.grind.gain.setTargetAtTime(.1 * tv, t, .12);
+    this.grind.gain.setTargetAtTime((this.driveBuf ? .035 : .1) * tv, t, .12);
     this.squeal.gain.setTargetAtTime(Math.min(.05, .045 * turnW * (.3 + tv)), t, .15);
     this.squealBp.frequency.setTargetAtTime(2100 + 500 * Math.sin(t * 3.1) + 300 * Math.sin(t * 7.3), t, .05);
   }
@@ -108,6 +137,7 @@ export class Sfx {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     for (const g of [this.eng, this.grind, this.squeal]) g.gain.setTargetAtTime(0, t, .3);
+    for (const d of this.drives?.values() || []) d.g.gain.setTargetAtTime(0, t, .3);
   }
 
   // track clatter of any tank: link knocks scheduled ahead on the audio clock, faster with track speed
