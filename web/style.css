@@ -172,3 +172,5 @@ button.sm { padding: 2px 9px; font-size: 13px; margin: 0 2px; }
 #t-net .seg { margin-bottom: 4px; }
 .credits { color: #8a8f97; font-size: 11.5px; margin-top: 8px; }
 .credits a { color: #b8bec8; }
+#net-link { width: 300px !important; font-size: 12px !important; }
+.small { font-size: 12px; margin: 2px 0 8px; }

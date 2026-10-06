@@ -16,6 +16,25 @@ export class Net {
     this.active = false; this.host = false; this.guest = false;
     this.events = []; this.snapT = 0; this.statT = 0; this.inT = 0; this.rep = 0; this.ammo = 'AP';
     this.byId = new Map();
+    // invite link: ?istaba=<room id> joins that room as soon as the room list arrives
+    this.invite = +new URLSearchParams(location.search).get('istaba') || 0;
+  }
+
+  inviteUrl() { return `${location.origin}${location.pathname}?istaba=${this.room.id}`; }
+
+  // a friend opened an invite link: ask for a name once, then join (with the password if the room has one)
+  useInvite() {
+    const id = this.invite; this.invite = 0;
+    history.replaceState(null, '', location.pathname);
+    const r = this.rooms.find(r => r.id === id);
+    if (!r) return this.flash('Ielūguma istaba vairs nepastāv. Palūdz draugam jaunu saiti.', true);
+    if (!(this.g.opts.name || '').trim()) {
+      const n = prompt('Tavs vārds spēlē:', '');
+      if (n && n.trim()) { this.g.opts.name = n.trim().slice(0, 16); this.g.saveOpts(); this.send({ t: 'name', name: this.name() }); }
+    }
+    const pass = r.locked ? prompt(`Istabas „${r.name}” parole:`) : '';
+    if (pass === null) return;
+    this.send({ t: 'join', id, pass });
   }
 
   // ------------------------------------------------------------------ connection
@@ -38,7 +57,7 @@ export class Net {
   onMsg(m) {
     switch (m.t) {
       case 'hello': this.myId = m.id; break;
-      case 'list': this.rooms = m.rooms; this.render(); break;
+      case 'list': this.rooms = m.rooms; this.render(); if (this.invite && !this.room) this.useInvite(); break;
       case 'room': this.room = m.room; this.render(); break;
       case 'closed': this.room = null; if (this.active) { this.stopMatch(); this.g.toMenu(); } this.flash(m.why, true); this.send({ t: 'list' }); break;
       case 'error': this.flash(m.msg, true); break;
@@ -96,6 +115,8 @@ export class Net {
          ${s.rule === 'time' ? `<div class="seg" id="net-min">${[2, 3, 5].map(n => `<button data-v="${n}" class="${s.minutes === n ? 'on' : ''}">${n} min</button>`).join('')}</div>` : ''}`
       : `<p>${RULES[s.rule]}${s.rule === 'time' ? ` · ${s.minutes} min` : ''}</p>`;
     return `<h3>${r.locked ? '🔒 ' : ''}${esc(r.name)}</h3>
+      <div class="nfield"><span>Ielūgums</span><input id="net-link" readonly value="${esc(this.inviteUrl())}"><button class="ghost sm" id="net-copy">Kopēt saiti</button></div>
+      <p class="dim small">Nosūti šo saiti draugam: atverot to, viņš nonāk tieši šajā istabā${r.locked ? ' (parole jāpasaka atsevišķi)' : ''}.</p>
       <div class="nteams">${team('blue')}${team('red')}</div>
       <div class="nfield"><span>Noteikumi</span><div>${rules}</div></div>
       <div class="mrow">${isHost ? '<button id="net-start" class="big">Sākt kauju</button>' : '<span class="dim">Gaidām, kamēr saimnieks sāks kauju…</span>'}
@@ -115,6 +136,11 @@ export class Net {
       this.send({ t: 'join', id: +b.dataset.join, pass });
     };
     on('net-leave', () => this.send({ t: 'leave' }));
+    on('net-copy', () => {
+      const el = $('net-link'); el.select();
+      (navigator.clipboard ? navigator.clipboard.writeText(el.value) : Promise.reject()).catch(() => document.execCommand('copy'))
+        .finally(() => this.flash('Saite nokopēta — ielīmē to draugam (Ctrl+V)', false));
+    });
     for (const b of document.querySelectorAll('#net-body [data-team]')) b.onclick = () => this.send({ t: 'team', team: b.dataset.team });
     const set = f => { const s = JSON.parse(JSON.stringify(this.room.settings)); f(s); this.send({ t: 'settings', settings: s }); };
     for (const b of document.querySelectorAll('#net-body [data-bot]')) b.onclick = () => set(s => {

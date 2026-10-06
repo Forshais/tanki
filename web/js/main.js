@@ -786,4 +786,5 @@ const game = window.game = new Game();
 game.load().then(() => {
   game.run();
   $('loader').classList.remove('show'); game.showMenu(true);
+  if (new URLSearchParams(location.search).has('istaba')) document.querySelector('[data-tab="t-net"]').click();   // invite link
 }).catch(e => { $('loading').textContent = 'Kļūda: ' + e.message; console.error(e); });
