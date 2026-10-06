@@ -35,7 +35,16 @@ const TRACK = (() => {
   const pairs = Math.round(L / PAIR);
   return { L, N, Z, Y, A, pairs, step: L / pairs };
 })();
-const _m = new THREE.Matrix4();
+// a broken track snaps on the bottom run just behind the last road wheel; the part that ran over the rear
+// sprocket and the rear of the top run (TAIL metres of chain) falls off and lies on the ground behind the tank
+const BREAK = (() => {
+  let best = 0, bd = 1e9;
+  for (let i = 0; i < TRACK.N; i++) { const d = Math.abs(TRACK.Z[i] + 2.25) + (TRACK.Y[i] > .1 ? 9 : 0); if (d < bd) { bd = d; best = i; } }
+  return { s: best * TRACK.L / TRACK.N, z: TRACK.Z[best] };
+})();
+const TAIL = 3.4;
+const _m = new THREE.Matrix4(), _m2 = new THREE.Matrix4();
+const jit = k => { const x = Math.sin(k * 12.9898) * 43758.5453; return x - Math.floor(x); };
 const TURRET_PART = s => s._turretPart || (s._turretPart = { region: 'turret', label: 'tornī', armor: s.armor.turret });
 
 // decal materials, made once
@@ -264,9 +273,11 @@ export class Tank {
     const n = this.net;
     if (!n) return;
     const h0 = this.heading, x0 = this.x, z0 = this.z;
-    if (Math.hypot(n.x - this.x, n.z - this.z) > 6) { this.x = n.x; this.z = n.z; this.heading = n.h; }
-    const k = 1 - Math.exp(-dt * 14);
-    this.x += (n.x - this.x) * k; this.z += (n.z - this.z) * k;
+    // snapshots come ~10 times a second: run the last one forward with its speed for up to 0.25 s
+    const age = Math.min(.25, this.g.time - (n.t ?? this.g.time)), tx = n.x + Math.sin(n.h) * this.v * age, tz = n.z + Math.cos(n.h) * this.v * age;
+    if (Math.hypot(tx - this.x, tz - this.z) > 6) { this.x = tx; this.z = tz; this.heading = n.h; }
+    const k = 1 - Math.exp(-dt * 12);
+    this.x += (tx - this.x) * k; this.z += (tz - this.z) * k;
     this.heading += wrap(n.h - this.heading) * k;
     this.turretYaw = wrap(this.turretYaw + wrap(n.ty - this.turretYaw) * k);
     this.pitch += (n.p - this.pitch) * k;
@@ -278,7 +289,7 @@ export class Tank {
 
   // host state for a puppet: [x, z, heading, v, turretYaw, pitch, hp, reload, ammo(0 AP/1 HE), shield, spinDir, modT, modK, modE, trackSide(0 L/1 R)]
   applyNet(a) {
-    this.net = { x: a[0], z: a[1], h: a[2], ty: a[4], p: a[5] };
+    this.net = { x: a[0], z: a[1], h: a[2], ty: a[4], p: a[5], t: this.g.time };
     this.v = a[3]; this.hp = a[6]; this.reload = a[7]; this.ammo = a[8] ? 'HE' : 'AP'; this.shield = a[9]; this.spinDir = a[10];
     const was = { ...this.mod };
     this.mod.turret = a[11]; this.mod.track = a[12]; this.mod.engine = a[13]; this.trackSide = a[14] ? 'R' : 'L';
@@ -341,12 +352,23 @@ export class Tank {
   animateTracks(dL, dR) {
     if (!Number.isFinite(dL)) dL = 0;
     if (!Number.isFinite(dR)) dR = 0;
+    const brokenSide = this.mod && this.mod.track !== 0 ? this.trackSide : null;
     for (const tr of this.tracks) {
-      const d = tr.side === 'L' ? dL : dR;
+      const d = tr.side === 'L' ? dL : dR, broken = tr.side === brokenSide, out = Math.sign(tr.x);
       tr.off = ((tr.off - d) % TRACK.L + TRACK.L) % TRACK.L;
       if (!Number.isFinite(tr.off)) tr.off = 0;
       for (let k = 0; k < TRACK.pairs; k++) {
-        const i = Math.floor(((k * TRACK.step + tr.off) % TRACK.L) / TRACK.L * TRACK.N) % TRACK.N;
+        const s = (k * TRACK.step + tr.off) % TRACK.L, u = (BREAK.s - s + TRACK.L) % TRACK.L;
+        if (broken && u < TAIL) {
+          // flat on the ground, trailing back and curling a little outward, slightly untidy
+          const f = u / TAIL, j = jit(k + (tr.side === 'L' ? 0 : 50));
+          _m.makeRotationY(out * (.08 + .35 * f * f) + (j - .5) * .12);
+          _m.multiply(_m2.makeRotationZ((j - .5) * .08));
+          _m.setPosition(tr.x + out * (.05 + .45 * f * f), TT + .006 * j, BREAK.z - .12 - u * .96);
+          tr.im.setMatrixAt(k, _m);
+          continue;
+        }
+        const i = Math.floor(s / TRACK.L * TRACK.N) % TRACK.N;
         _m.makeRotationX(TRACK.A[i]); _m.setPosition(tr.x, TRACK.Y[i], TRACK.Z[i]);
         tr.im.setMatrixAt(k, _m);
       }
@@ -381,8 +403,12 @@ export class Tank {
     const { p, dir } = this.muzzle();
     this.reload = this.spec.reload; this.recoil = 1; this.revealT = 3;
     this.g.stat(this, 'shots');
-    const sid = this.g.combat.spawn(this, p, dir, this.ammo);
-    this.g.net?.event('shot', { id: this.id, sid, p: [p.x, p.y, p.z].map(v => Math.round(v * 1000) / 1000), d: [dir.x, dir.y, dir.z].map(v => Math.round(v * 10000) / 10000), type: this.ammo });
+    // the shell starts at the mantlet and travels down the barrel: with the muzzle poking through a wall
+    // it hits the wall instead of appearing on the far side
+    const start = this.gun.getWorldPosition(new THREE.Vector3());
+    const sid = this.g.combat.spawn(this, start, dir, this.ammo);
+    const r3 = v => [v.x, v.y, v.z].map(n => Math.round(n * 1000) / 1000);
+    this.g.net?.event('shot', { id: this.id, sid, p: r3(start), m: r3(p), d: [dir.x, dir.y, dir.z].map(v => Math.round(v * 10000) / 10000), type: this.ammo });
     this.g.fx.muzzle(p, dir);
     this.g.sfx.shot(this.g.hearing(p), this.isPlayer);
     if (this.isPlayer) this.g.shake(.35);

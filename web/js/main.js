@@ -413,7 +413,7 @@ class Game {
     if (this.over) return;
     this.over = true; this.sfx.stopEngine();
     this.net?.event('end', { winner, why });
-    if (this.net?.host) this.net.hostTick(1);           // flush now: the host's tab may be closed right after
+    if (this.net?.host) this.net.hostTick(1, true);     // flush now: the host's tab may be closed right after
     const world = this.world;
     setTimeout(() => {
       if (this.world !== world) return;          // a new match was started meanwhile

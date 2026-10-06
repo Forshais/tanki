@@ -353,16 +353,18 @@ export class World {
         const [lx, lz] = toLocal(dx, dz, t.heading), mg = b.s * .55;
         const ox = t.spec.hull.hw + mg - Math.abs(lx), oz = t.spec.hull.hl + mg - Math.abs(lz);
         if (ox <= 0 || oz <= 0) { if (ox < -.4 || oz < -.4) b.touch.delete(t); continue; }
+        // passes (flattening) count for every tank, but a tank hidden from us does not bend bushes on our screen
+        if (!b.touch.has(t)) {
+          b.touch.add(t);
+          if (t.alive && Math.abs(t.v) > .8) this.bushPass(b, t);
+        }
+        if (t.hidden) continue;
         pushed = true;
         // pressed out sideways from the hull and dragged along with the motion
         const fwd = Math.sign(t.v) * Math.min(1, Math.abs(t.v) / 3), side = Math.sign(lx || 1) * (.45 + .55 * (1 - Math.min(1, Math.abs(lx) / (t.spec.hull.hw + mg))));
         let [wx, wz] = toWorld(side, fwd, t.heading);
         const len = Math.hypot(wx, wz) || 1, amt = .8 * b.h * Math.min(1, .45 + Math.min(ox, oz) / (mg + .4));
         tx += wx / len * amt; tz += wz / len * amt;
-        if (!b.touch.has(t)) {
-          b.touch.add(t);
-          if (t.alive && Math.abs(t.v) > .8) this.bushPass(b, t);
-        }
         if (t.alive && Math.abs(t.v) > 1.5 && Math.random() < dt * 2.5) this.leaves(b, 1);
       }
       if (pushed) {
@@ -398,7 +400,7 @@ export class World {
     b.passes++;
     b.flatT = b.passes >= b.need ? 1 : Math.max(b.flatT, b.passes * .17);
     if (b.flatT >= 1 && b.covering) { b.covering = false; this.setCover(b, -1); }
-    this.leaves(b, 4);
+    if (!t.hidden) this.leaves(b, 4);
     this.g.sfx.rustle?.(this.g.hearing(t) * .8);
   }
 

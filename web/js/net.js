@@ -7,7 +7,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const BOT_NAMES = { blue: ['Ozols', 'Kalniņš', 'Bērziņš'], red: ['Vilks', 'Lācis', 'Ērglis'] };
 const RULES = { lives3: '3 dzīvības', lives1: '1 dzīvība', time: 'Uz laiku' };
-const SNAP = 1 / 20, INPUT = 1 / 20;
+const SNAP = 1 / 10, INPUT = 1 / 15, FULL = 1;      // snapshot / input rates (s), full refresh every second
 const r3 = v => Math.round(v * 1000) / 1000, r2 = v => Math.round(v * 100) / 100;
 
 export class Net {
@@ -190,6 +190,7 @@ export class Net {
   startMatch(mode) {
     this.host = mode.hostId === this.myId; this.guest = !this.host; this.active = true;
     this.events = []; this.byId.clear(); this.snapT = 0; this.statT = 0; this.inT = 0; this.rep = 0; this.ammo = 'AP'; this.lobbyReady = false;
+    this.sent = new Map(); this.metaSent = ''; this.fullT = 0; this.waitT = 0; this.lastIn = '';
     this.g.newMatch(mode, this);
     this.showPing();
   }
@@ -208,14 +209,29 @@ export class Net {
   event(type, data) { if (this.host && this.active) this.events.push([type, data]); }
 
   // host: snapshot of every tank 20 times a second, the events since the last one, stats once a second
-  hostTick(dt) {
-    if ((this.snapT -= dt) > 0) return;
+  // host: snapshot of the tanks that changed (all of them once a second) ~10 times a second, the events since the
+  // last one, stats every 3 s. If the connection is still busy sending, skip: an old snapshot is worthless, and
+  // queuing them is what makes the ping climb to seconds on a slow upload.
+  hostTick(dt, force = false) {
+    if ((this.snapT -= dt) > 0 && !force) return;
     this.snapT = SNAP;
-    const g = this.g, inf = a => a.map(n => n === Infinity ? -1 : n);
-    const s = { tk: g.tanks.map(t => t.alive ? [t.id, 1, ...t.netState()] : [t.id, 0, r2(t.x), r2(t.z), r2(t.heading)]), tl: g.timeLeft === null ? null : r3(g.timeLeft),
-      left: { blue: inf(g.left.blue), red: inf(g.left.red) }, b: [g.world.bases.blue.hp, g.world.bases.red.hp], hr: Math.round(this.rtt || 0) };
-    if ((this.statT -= SNAP) <= 0 || this.events.some(e => e[0] === 'kill')) { this.statT = 1; s.st = g.stats; }
-    this.send({ t: 'g', d: { s, e: this.events } });
+    const busy = this.ws && this.ws.bufferedAmount > 1500;
+    this.waitT = (this.waitT || 0) + SNAP;
+    if (busy && !force && (!this.events.length || this.waitT < .6)) return;
+    this.waitT = 0;
+    const g = this.g, inf = a => a.map(n => n === Infinity ? -1 : n), full = (this.fullT = (this.fullT || 0) - SNAP) <= 0;
+    if (full) this.fullT = FULL;
+    this.sent = this.sent || new Map();
+    const tk = [];
+    for (const t of g.tanks) {
+      const a = t.alive ? [t.id, 1, ...t.netState()] : [t.id, 0, r2(t.x), r2(t.z), r2(t.heading)], old = this.sent.get(t.id);
+      if (full || !old || old.length !== a.length || a.some((v, i) => v !== old[i])) { tk.push(a); this.sent.set(t.id, a); }
+    }
+    const s = { tk, tl: g.timeLeft === null ? null : Math.round(g.timeLeft * 10) / 10, hr: Math.round(this.rtt || 0) };
+    const meta = JSON.stringify([inf(g.left.blue), inf(g.left.red), g.world.bases.blue.hp, g.world.bases.red.hp]);
+    if (full || meta !== this.metaSent) { this.metaSent = meta; s.left = { blue: inf(g.left.blue), red: inf(g.left.red) }; s.b = [g.world.bases.blue.hp, g.world.bases.red.hp]; }
+    if ((this.statT -= SNAP) <= 0 || this.events.some(e => e[0] === 'kill')) { this.statT = 3; s.st = g.stats; }
+    this.send({ t: 'g', d: this.events.length ? { s, e: this.events } : { s } });
     this.events = [];
   }
 
@@ -245,9 +261,14 @@ export class Net {
     if ((this.inT -= dt) > 0) return;
     this.inT = INPUT;
     const me = this.g.player;
-    if (!me || !me.alive) return;
+    if (!me || !me.alive || (this.ws && this.ws.bufferedAmount > 600)) return;
     const c = me.controls, a = c.aim;
-    this.send({ t: 'g', d: { th: c.throttle, tu: c.turn, f: c.fire ? 1 : 0, a: [r3(a.x), r3(a.y), r3(a.z)], am: this.ammo === 'HE' ? 1 : 0, rep: this.rep } });
+    const d = { th: c.throttle, tu: c.turn, f: c.fire ? 1 : 0, a: [r2(a.x), r2(a.y), r2(a.z)], am: this.ammo === 'HE' ? 1 : 0, rep: this.rep };
+    const key = JSON.stringify(d);
+    this.beatT = (this.beatT || 0) - INPUT;
+    if (key === this.lastIn && this.beatT > 0) return;
+    this.lastIn = key; this.beatT = .3;
+    this.send({ t: 'g', d });
   }
 
   // guest: events first (in host order), then the snapshot
@@ -264,8 +285,8 @@ export class Net {
     if (s.tl !== null) g.timeLeft = s.tl;
     this.hostRtt = s.hr || 0;
     const inf = a => a.map(n => n < 0 ? Infinity : n);
-    g.left = { blue: inf(s.left.blue), red: inf(s.left.red) };
-    g.world.bases.blue.hp = s.b[0]; g.world.bases.red.hp = s.b[1];
+    if (s.left) g.left = { blue: inf(s.left.blue), red: inf(s.left.red) };
+    if (s.b) { g.world.bases.blue.hp = s.b[0]; g.world.bases.red.hp = s.b[1]; }
     if (s.st) g.stats = s.st;
   }
 
@@ -274,9 +295,9 @@ export class Net {
     switch (type) {
       case 'spawn': this.byId.set(e.id, g.netSpawn(e, this.myId)); break;
       case 'shot': {
-        const t = this.byId.get(e.id), p = V(e.p), d = V(e.d);
+        const t = this.byId.get(e.id), p = V(e.p), d = V(e.d), m = e.m ? V(e.m) : p;
         g.combat.spawn(t, p, d, e.type, e.sid, true);
-        g.fx.muzzle(p, d); g.sfx.shot(g.hearing(p), t === g.player);
+        g.fx.muzzle(m, d); g.sfx.shot(g.hearing(m), t === g.player);
         if (t) { t.recoil = 1; t.revealT = 3; if (t === g.player) g.shake(.35); }
         break;
       }
