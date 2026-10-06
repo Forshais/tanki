@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="lv">
+<head>
+<meta charset="utf-8">
+<title>Tanki: tests</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hurt"></div>
+<div id="labels"></div>
+
+<div id="me" class="panel">
+  <div class="row"><b id="myname">Jānis</b><span class="dim">T-44</span><span id="speed" class="dim right">0 km/h</span></div>
+  <div class="bar"><i id="hpbar"></i></div>
+  <div class="row small"><span id="hptext"></span><span id="mylives" class="right"></span></div>
+  <div class="bar reload"><i id="reloadbar"></i></div>
+  <div class="row small"><span id="reloadtext"></span></div>
+  <div class="mods"><div id="mod-turret">Tornis <em>ok</em></div><div id="mod-track">Ķēdes <em>ok</em></div><div id="mod-engine">Dzinējs <em>ok</em></div></div>
+  <div class="ammo"><div id="ammoAP" class="on"><b>1</b> BB<small>bruņu caursitošais</small></div><div id="ammoHE"><b>2</b> OF<small>fugasais</small></div></div>
+</div>
+
+<div id="score" class="panel">
+  <div class="team blue"><span class="tname">Zilie</span><span>ērglis <b id="bluebase"></b></span><span id="blueinfo"></span></div>
+  <div id="timer"></div>
+  <div class="team red"><span class="tname">Sarkanie</span><span>ērglis <b id="redbase"></b></span><span id="redinfo"></span></div>
+</div>
+
+<canvas id="minimap"></canvas>
+<div id="feed"></div>
+<div id="msgs"></div>
+<div id="respawn"></div>
+<div id="fps"></div>
+<div id="banner"></div>
+<div id="hitmark"></div>
+<div id="dmgdirs"></div>
+<div id="board" class="board"></div>
+<div id="help">W A S D brauc · pele tēmē · kreisā poga šauj · Shift tēmēklis · C brīvā kamera · V kameras režīms · X kamera atpakaļ · F remonts · Tab statistika · 1 BB, 2 OF · Esc pauze</div>
+<div id="scope"><svg viewBox="-200 -200 400 400" preserveAspectRatio="xMidYMid meet">
+  <g fill="none" stroke="#111" stroke-width="2.2">
+    <path class="c" d="M-9 14 L0 0 L9 14"/><path d="M-49 14 L-40 0 L-31 14"/><path d="M31 14 L40 0 L49 14"/>
+    <path d="M-89 14 L-80 0 L-71 14"/><path d="M71 14 L80 0 L89 14"/>
+    <path d="M-190 0 H-100 M100 0 H190"/><path d="M0 30 V190"/>
+    <path d="M-120 -6 V6 M-140 -6 V6 M-160 -6 V6 M120 -6 V6 M140 -6 V6 M160 -6 V6"/>
+    <path d="M-6 50 H6 M-6 80 H6 M-6 110 H6 M-6 140 H6"/>
+  </g>
+  <g fill="#111" font-size="11" font-family="Arial"><text x="10" y="54">4</text><text x="10" y="84">8</text><text x="10" y="114">12</text><text x="10" y="144">16</text></g>
+</svg></div>
+
+<div id="gunmark"></div>
+<div id="pentip"></div>
+<div id="cross"><svg width="44" height="44" viewBox="-22 -22 44 44"><circle r="16" class="track"/><circle id="crossring" r="16" class="prog"/><path d="M-6 0H-2M2 0H6M0 -6V-2M0 2V6"/></svg></div>
+
+<div id="loader" class="screen show">
+  <div class="shade"></div>
+  <div class="loadbox">
+    <div class="logo">TANKI</div>
+    <div class="tag">tanku kaujas · klasikas gars, jauns izskats</div>
+    <div class="lbar"><i id="lbar"></i></div>
+    <div id="loading">Ielādē…</div>
+  </div>
+</div>
+
+<div id="menu" class="screen">
+  <div class="shade"></div>
+  <div class="menucol">
+    <div class="logo">TANKI</div>
+    <div class="tag">T-44 · kauja ar botiem</div>
+    <div class="mcard" id="solo">
+      <h2>Jauna kauja</h2>
+      <div class="field"><span>Komandas</span><div class="seg" data-k="size"><button data-v="1">1 pret 1</button><button data-v="3">3 pret 3</button></div></div>
+      <div class="field"><span>Noteikumi</span><div class="seg" data-k="rule"><button data-v="lives3">3 dzīvības</button><button data-v="lives1">1 dzīvība</button><button data-v="time">Uz laiku</button></div></div>
+      <div class="field" id="f-min"><span>Laiks</span><div class="seg" data-k="minutes"><button data-v="2">2 min</button><button data-v="3">3 min</button><button data-v="5">5 min</button></div></div>
+      <p id="modeinfo" class="dim"></p>
+      <button id="play" class="big">Sākt kauju</button>
+    </div>
+    <div class="mrow">
+      <button class="ghost" data-tab="t-opts">Iestatījumi</button>
+      <button class="ghost" data-tab="t-help">Vadība un padomi</button>
+      <button class="ghost" data-tab="t-net">Spēlēt ar draugu</button>
+    </div>
+    <div id="t-net" class="mcard tab"><h2>Spēlēt ar draugu</h2><div id="net-flash"></div><div id="net-body"></div></div>
+    <div id="t-opts" class="mcard tab"><h2>Iestatījumi</h2><div id="optsHome"></div></div>
+    <div id="t-help" class="mcard tab">
+      <h2>Vadība un padomi</h2>
+      <ul>
+        <li><b>Mērķis:</b> iznīcini pretinieka ērgli vai visus pretinieka tankus. Sargā savu ērgli. Uz laiku: uzvar komanda ar vairāk iznīcinātiem tankiem.</li>
+        <li><b>Bruņas:</b> T-44 priekšējā plāksne ir ļoti bieza. Tēmē uz torni vai sāniem, un neliec savu priekšu slīpi pret pretinieku.</li>
+        <li><b>BB</b> caursit bruņas. <b>OF</b> grauj ķieģeļu sienas un kaitē arī tad, ja necaursit. Pārlāde 6 s.</li>
+        <li><b>Krūmi</b> slēpj tanku (pretinieks redz tikai no 18 m), bet pēc 3–5 pārbraucieniem tie paliek noplakuši.</li>
+      </ul>
+      <p class="keys">W A S D brauc · pele tēmē · kreisā poga šauj · Shift tēmēklis · C (turēt) brīvā kamera · labā poga + vilkt grozīt kameru · ritenītis tuvāk/tālāk · V kameras režīms · X kamera atpakaļ · F remonts · Tab statistika · 1 / 2 munīcija · Esc pauze</p>
+    </div>
+  </div>
+</div>
+
+<div id="overlay">
+  <div class="card">
+    <h1>Pauze</h1>
+    <p id="pausemode" class="dim"></p>
+    <div class="btns"><button id="resume">Turpināt</button><button id="restart" class="ghost">Sākt no jauna</button><button id="tomenu" class="ghost">Galvenā izvēlne</button></div>
+    <div id="optsPause"></div>
+  </div>
+</div>
+
+<div id="opts" class="opts">
+  <label><input type="checkbox" id="opt-carReverse"> Atpakaļgaitā stūrēt kā War Thunder (kā automašīnai)</label>
+  <label>Kamera <select id="opt-camMode"><option value="tactical">taktiskā (kursors tēmē)</option><option value="wt">War Thunder (pele griež skatu)</option></select> · V pārslēdz</label>
+  <label>Grafika <select id="opt-quality"><option value="high">augsta</option><option value="medium">vidēja</option><option value="low">zema (vēsāks dators)</option></select>
+    · kadri <select id="opt-fps"><option value="60">60/s</option><option value="30">30/s</option><option value="0">bez ierobežojuma (dators karst)</option></select></label>
+  <label><input type="checkbox" id="opt-showFps"> Rādīt kadrus sekundē (F3)</label>
+  <label><input type="checkbox" id="opt-rings"> Rādīt komandu apļus zem tankiem</label>
+</div>
+
+<div id="dead">
+  <div class="card"><h1>Tanks iznīcināts</h1><p class="dim">Rezerves tanki ir beigušies, bet komanda vēl cīnās.</p>
+  <button id="dead-watch">Novērot kauju (atstarpe — nākamais tanks)</button> <button id="dead-restart" class="ghost">Sākt no jauna</button> <button id="dead-menu" class="ghost">Galvenā izvēlne</button></div>
+</div>
+
+<div id="end">
+  <div class="card"><h1 id="endtitle"></h1><p id="endwhy" class="dim"></p><div id="endboard" class="board inline"></div><button id="again">Spēlēt vēlreiz (R)</button> <button id="end-menu" class="ghost">Galvenā izvēlne</button></div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

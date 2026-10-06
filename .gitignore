@@ -1,0 +1,8 @@
+node_modules/
+*.blend1
+modeli/renders/
+__pycache__/
+Bildes/
+dizains/
+.claude/
+*.zip
